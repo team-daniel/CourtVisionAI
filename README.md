@@ -7,6 +7,9 @@ CourtVisionAI runs analysis directly in the browser, using an ONNX basketball de
 [![](https://img.shields.io/badge/Live_Demo-ff4f0a?style=for-the-badge&logo=netlify&logoColor=white&label=&labelColor=4b4b4b)](https://courtvisionaiapp.netlify.app/)
 [![](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white&label=&labelColor=4b4b4b)](https://www.typescriptlang.org/)
 [![](https://img.shields.io/badge/ONNX_Runtime-005CED?style=for-the-badge&logo=onnx&logoColor=white&label=&labelColor=4b4b4b)](https://onnxruntime.ai/)
+[![](https://img.shields.io/badge/TikTok-000000?style=for-the-badge&logo=tiktok&logoColor=white&label=&labelColor=4b4b4b)](https://www.tiktok.com/@pintsizeai)
+[![](https://img.shields.io/badge/Instagram-E4405F?style=for-the-badge&logo=instagram&logoColor=white&label=&labelColor=4b4b4b)](https://www.instagram.com/pintsizeai/)
+[![](https://img.shields.io/badge/Blog-1f3d18?style=for-the-badge&logo=readthedocs&logoColor=white&label=&labelColor=4b4b4b)](https://daniel-bethell.co.uk/)
 
 <p align="center">
   <img
@@ -317,6 +320,12 @@ Uploaded videos are analysed on the user's device and sessions are stored in loc
 - HTML Canvas
 - IndexedDB
 - Netlify
+
+---
+
+## License
+
+This project is released under the MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
