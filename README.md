@@ -5,10 +5,9 @@ Browser-based basketball video analysis for tracking players, possessions and sh
 CourtVisionAI runs analysis directly in the browser, using an ONNX basketball detector, multi-object tracking and a lightweight finite-state machine (FSM) to turn detections into useful basketball statistics.
 
 [![](https://img.shields.io/badge/Live_Demo-ff4f0a?style=for-the-badge&logo=netlify&logoColor=white&label=&labelColor=4b4b4b)](https://courtvisionaiapp.netlify.app/)
-[![](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white&label=&labelColor=4b4b4b)](https://www.typescriptlang.org/)
-[![](https://img.shields.io/badge/ONNX_Runtime-005CED?style=for-the-badge&logo=onnx&logoColor=white&label=&labelColor=4b4b4b)](https://onnxruntime.ai/)
 [![](https://img.shields.io/badge/TikTok-000000?style=for-the-badge&logo=tiktok&logoColor=white&label=&labelColor=4b4b4b)](https://www.tiktok.com/@pintsizeai)
 [![](https://img.shields.io/badge/Instagram-E4405F?style=for-the-badge&logo=instagram&logoColor=white&label=&labelColor=4b4b4b)](https://www.instagram.com/pintsizeai/)
+[![](https://img.shields.io/badge/YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white&label=&labelColor=4b4b4b)](https://www.youtube.com/@pintsizeai-yt)
 [![](https://img.shields.io/badge/Blog-1f3d18?style=for-the-badge&logo=readthedocs&logoColor=white&label=&labelColor=4b4b4b)](https://daniel-bethell.co.uk/)
 
 <p align="center">
