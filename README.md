@@ -67,22 +67,17 @@ The focus is currently on simple side-view basketball footage where the basket, 
   - field-goal percentage
   - rebounds
 - Adjustable analysis quality:
-  - Full — 30 FPS target
-  - Balanced — 15 FPS target
-  - Fast — 10 FPS target
+  - Full - 30 FPS target
+  - Balanced - 15 FPS target
+  - Fast - 10 FPS target
 - Player thumbnail capture
 - Timestamp-synchronised session playback
 - Detection overlays during playback
 - Event timeline
-- Local session persistence using IndexedDB
-- Past Sessions page
-- Session deletion
+- Past Sessions tracker
 - Browser storage usage / persistent-storage support
-- Exported session video with CourtVisionAI branding
-- Landscape and portrait export modes
-- Portrait export follows the tracked basketball
+- Exported session video with CourtVisionAI branding for social media
 - Responsive desktop and mobile UI
-- Netlify deployment
 
 ### In progress / planned
 
@@ -151,25 +146,6 @@ Run the development server:
 npm run dev
 ```
 
-Vite will print a local address, normally:
-
-```text
-http://localhost:5173/
-```
-
-To test the production build:
-
-```bash
-npm run build
-npm run preview
-```
-
-To expose the dev server to another device on the same network:
-
-```bash
-npm run dev -- --host
-```
-
 ---
 
 ## Project structure
@@ -202,7 +178,7 @@ CourtVisionAI/
 └── vite.config.ts
 ```
 
-The project is intentionally kept fairly small and modular so that the same detection, tracking and game-state logic can later be reused by a live camera mode.
+The project is intentionally kept fairly small, everything is open-source to encourage open science!
 
 ---
 
@@ -276,30 +252,6 @@ Current export options include:
 Portrait exports use saved basketball detections to move the crop toward the ball. If the ball briefly disappears, the view stays around its last known position until tracking resumes.
 
 If you post an exported clip, feel free to tag **[@pintsizeai](https://www.tiktok.com/@pintsizeai)**.
-
----
-
-## Shootaround mode
-
-The next major game mode is designed for less structured practice sessions.
-
-Instead of a fixed Player A / Player B FSM, Shootaround will use:
-
-```text
-Dynamic players
-     +
-Dynamic basketballs
-     ↓
-One shot FSM per basketball
-     ↓
-Current owner / shooter stored by track ID
-     ↓
-Attempts + makes credited to the correct player
-```
-
-This allows players to enter or leave the scene, swap basketballs and shoot simultaneously without requiring fixed player slots.
-
-The initial Shootaround statistics will focus on shooting efficiency rather than rebounds or game score.
 
 ---
 
