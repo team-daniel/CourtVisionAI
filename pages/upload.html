@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  >
+
+  <meta name="theme-color" content="#fffaf6">
+
+  <title>Upload Video · CourtVisionAI</title>
+
+  <link rel="stylesheet" href="../styles/global.css">
+  <link rel="stylesheet" href="../styles/upload.css">
+  <link rel="stylesheet" href="../styles/analysis.css">
+</head>
+
+<body>
+  <div class="app-shell">
+
+    <header class="site-header">
+      <a class="brand" href="../index.html" aria-label="CourtVisionAI home">
+        <span class="brand-mark icon-mask icon-basketball" aria-hidden="true"></span>
+
+        <span class="brand-copy">
+          <strong>CourtVisionAI</strong>
+          <span>Basketball tracking</span>
+        </span>
+      </a>
+
+      <nav class="desktop-nav" aria-label="Primary navigation">
+        <a href="../index.html">Home</a>
+        <a href="./404.html">Live</a>
+        <a href="/pages/history.html">History</a>
+        <a href="./404.html">Settings</a>
+      </nav>
+
+      <a class="header-live-button" href="./upload.html" aria-label="Analyse a video">
+        <span class="icon-mask icon-upload" aria-hidden="true"></span>
+      </a>
+    </header>
+
+    <main class="upload-page">
+      <section class="upload-panel">
+        <div class="upload-heading">
+          <div>
+            <p class="upload-eyebrow">Saved footage</p>
+            <h1>Upload Video to Track</h1>
+
+            <p>
+              Select a recorded basketball game. Analysis starts
+              automatically and stays on this device.
+            </p>
+          </div>
+
+            <div class="analysis-settings">
+
+              <div class="mode-field">
+                <label for="game-mode">Mode</label>
+
+                <div class="select-wrapper">
+                  <select id="game-mode" name="game-mode">
+                    <option value="1v1">1 vs 1</option>
+                  </select>
+
+                  <span
+                    class="select-arrow"
+                    aria-hidden="true"
+                  ></span>
+                </div>
+              </div>
+
+              <div class="mode-field">
+                <label for="analysis-quality">Analysis quality</label>
+
+                <div class="select-wrapper">
+                  <select
+                    id="analysis-quality"
+                    name="analysis-quality"
+                  >
+                    <option value="full">Full · 30 FPS</option>
+                    <option value="balanced">Balanced · 15 FPS</option>
+                    <option value="fast">Fast · 10 FPS</option>
+                  </select>
+
+                  <span
+                    class="select-arrow"
+                    aria-hidden="true"
+                  ></span>
+                </div>
+              </div>
+
+            </div>
+        </div>
+
+        <input
+          class="video-input"
+          id="video-input"
+          name="video"
+          type="file"
+          accept="video/*,.mp4,.mov,.m4v,.webm"
+        >
+
+        <label
+          class="upload-dropzone"
+          for="video-input"
+          id="upload-dropzone"
+        >
+          <span
+            class="upload-icon"
+            aria-hidden="true"
+          >
+            <span class="icon-mask icon-upload"></span>
+          </span>
+
+          <span class="upload-dropzone-copy">
+            <strong>Upload your game video</strong>
+
+            <span class="upload-desktop-text">
+              Drag and drop a video here, or select one from your device.
+            </span>
+
+            <span class="upload-mobile-text">
+              Select a video from your device.
+            </span>
+          </span>
+
+          <span class="upload-button">
+            Choose Video
+          </span>
+
+          <span class="upload-file-types">
+            MP4, MOV, M4V or WebM
+          </span>
+        </label>
+
+        <section
+          class="analysis-panel"
+          id="analysis-panel"
+          aria-live="polite"
+          hidden
+        >
+          <div class="analysis-header">
+            <div>
+              <p class="analysis-eyebrow">Local analysis</p>
+              <h2 id="analysis-status">Opening video…</h2>
+              <p id="analysis-detail">Reading video information</p>
+              <p class="file-metadata" id="file-metadata"></p>
+            </div>
+
+            <strong id="analysis-time"></strong>
+          </div>
+
+          <div class="analysis-progress-row">
+            <progress
+              id="analysis-progress"
+              max="1"
+              value="0"
+            ></progress>
+
+            <span id="analysis-progress-text">0%</span>
+          </div>
+
+          <div class="analysis-scoreboard">
+            <div>
+              <span>Current state</span>
+              <strong id="game-state">No possession</strong>
+            </div>
+
+            <div>
+              <span>Player A · made / attempts</span>
+              <strong id="player-a-stats">0 / 0</strong>
+            </div>
+
+            <div>
+              <span>Player B · made / attempts</span>
+              <strong id="player-b-stats">0 / 0</strong>
+            </div>
+          </div>
+
+          <canvas
+            id="analysis-preview"
+            aria-label="Current analysed video frame"
+          ></canvas>
+
+          <div class="analysis-actions">
+            <button
+              class="analysis-secondary-button"
+              id="cancel-analysis"
+              type="button"
+            >
+              Cancel analysis
+            </button>
+
+            <button
+              class="analysis-primary-button"
+              id="choose-another-video"
+              type="button"
+              hidden
+            >
+              Choose another video
+            </button>
+          </div>
+
+          <p class="analysis-note">
+            CourtVisionAI analyses the recording frame by frame. The page
+            will open the tracked playback automatically when it finishes.
+          </p>
+        </section>
+
+        <aside
+          class="recording-guidance"
+          id="recording-guidance"
+        >
+          <span
+            class="guidance-icon"
+            aria-hidden="true"
+          >
+            i
+          </span>
+
+          <div>
+            <h2>For the best results</h2>
+
+            <p>
+              Keep the whole half court or full court visible throughout the video. Use the 0.5× camera lens where possible, keep the camera stable, avoid zooming or panning, and record in good, even lighting. Both players, the ball and the basket should remain clearly visible. Higher analysis quality checks more frames and is generally more accurate, while faster modes may make more tracking or stat mistakes.
+            </p>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <nav
+      class="mobile-nav"
+      aria-label="Mobile navigation"
+    >
+      <a
+        class="active"
+        href="../index.html"
+      >
+        <span
+          class="icon-mask icon-basketball"
+          aria-hidden="true"
+        ></span>
+
+        <span>Home</span>
+      </a>
+
+      <a href="./live.html">
+        <span
+          class="icon-mask icon-radio"
+          aria-hidden="true"
+        ></span>
+
+        <span>Live</span>
+      </a>
+
+      <a href="./history.html">
+        <span
+          class="icon-mask icon-clock"
+          aria-hidden="true"
+        ></span>
+
+        <span>History</span>
+      </a>
+
+      <a href="./settings.html">
+        <span
+          class="icon-mask icon-settings"
+          aria-hidden="true"
+        ></span>
+
+        <span>Settings</span>
+      </a>
+    </nav>
+  </div>
+
+  <script type="module" src="../scripts/upload.ts"></script>
+</body>
+</html>

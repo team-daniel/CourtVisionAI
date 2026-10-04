@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fffaf6">
+  <title>Past Sessions · CourtVisionAI</title>
+  <link rel="stylesheet" href="../styles/global.css">
+  <link rel="stylesheet" href="../styles/history.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="site-header">
+      <a class="brand" href="../index.html" aria-label="CourtVisionAI home">
+        <span class="brand-mark icon-mask icon-basketball" aria-hidden="true"></span>
+
+        <span class="brand-copy">
+          <strong>CourtVisionAI</strong>
+          <span>Basketball tracking</span>
+        </span>
+      </a>
+
+      <nav class="desktop-nav" aria-label="Primary navigation">
+        <a href="../index.html">Home</a>
+        <a href="./404.html">Live</a>
+        <a href="/pages/history.html">History</a>
+        <a href="./404.html">Settings</a>
+      </nav>
+
+      <a class="header-live-button" href="./upload.html" aria-label="Analyse a video">
+        <span class="icon-mask icon-upload" aria-hidden="true"></span>
+      </a>
+    </header>
+
+    <main class="history-page">
+      <section class="history-heading">
+        <div>
+          <p class="history-eyebrow">Saved locally</p>
+          <h1>Past Sessions</h1>
+          <p>
+            Reopen tracked games without analysing them again.
+            Sessions stay on this browser and device.
+          </p>
+        </div>
+
+        <a class="history-primary-action" href="./upload.html">
+          <span class="icon-mask icon-upload" aria-hidden="true"></span>
+          Analyse video
+        </a>
+      </section>
+
+      <section class="history-storage-card" id="history-storage">
+        <div class="history-storage-heading">
+          <div>
+            <strong>Device storage</strong>
+            <span id="session-storage-summary">Checking saved sessions…</span>
+          </div>
+
+          <button id="protect-storage" class="history-storage-button" type="button" hidden>
+            Keep sessions on device
+          </button>
+        </div>
+
+        <div class="history-storage-bar" aria-hidden="true">
+          <span id="history-storage-fill"></span>
+        </div>
+
+        <p id="history-storage-detail">
+          Your videos and analysis are stored locally in this browser.
+        </p>
+      </section>
+
+      <section class="history-loading" id="history-loading" aria-live="polite">
+        <span class="history-spinner" aria-hidden="true"></span>
+        <strong>Loading sessions…</strong>
+      </section>
+
+      <section class="history-state-card" id="history-empty" hidden>
+        <span class="history-empty-icon icon-mask icon-clock" aria-hidden="true"></span>
+        <h2>No tracked sessions yet</h2>
+        <p>Analyse your first game and it will appear here automatically.</p>
+        <a class="history-primary-action" href="./upload.html">Analyse a video</a>
+      </section>
+
+      <section class="history-state-card" id="history-error" hidden>
+        <h2>Could not open your sessions</h2>
+        <p data-history-error></p>
+      </section>
+
+      <section class="history-list" id="history-list" aria-label="Saved tracked sessions" hidden></section>
+    </main>
+
+    <nav class="mobile-nav" aria-label="Mobile navigation">
+      <a href="../index.html">
+        <span class="icon-mask icon-basketball" aria-hidden="true"></span>
+        <span>Home</span>
+      </a>
+      <a href="./live.html">
+        <span class="icon-mask icon-radio" aria-hidden="true"></span>
+        <span>Live</span>
+      </a>
+      <a class="active" href="./history.html">
+        <span class="icon-mask icon-clock" aria-hidden="true"></span>
+        <span>History</span>
+      </a>
+      <a href="./settings.html">
+        <span class="icon-mask icon-settings" aria-hidden="true"></span>
+        <span>Settings</span>
+      </a>
+    </nav>
+  </div>
+
+  <script type="module" src="../scripts/history.ts"></script>
+</body>
+</html>
