@@ -76,13 +76,9 @@ const playerAStats =
 const playerBStats =
   getRequiredElement<HTMLElement>("#player-b-stats");
 
-const pipeline = new BasketballPipeline({
+let pipeline = new BasketballPipeline({
   gameMode: "1v1",
-  effectiveFps: 30,
-  recoveryOptions: {
-    enabled: true,
-    discoveryEnabled: true,
-  },
+  analysisMode: "balanced",
 });
 
 const runner = new UploadedVideoRunner();
@@ -176,8 +172,13 @@ async function startAnalysis(file: File): Promise<void> {
       videoInfo.framesPerSecond
       / analysisFrameStride;
 
-    pipeline.setGameMode(getSelectedGameMode());
-    pipeline.configureTiming(analysedFramesPerSecond);
+    const selectedQuality = analysisQualitySelect.value as AnalysisQuality;
+
+    pipeline = new BasketballPipeline({
+      gameMode: getSelectedGameMode(),
+      effectiveFps: analysedFramesPerSecond,
+      analysisMode: selectedQuality === "full" ? "quality" : selectedQuality,
+    });
 
     fileMetadata.textContent = [
       file.name,

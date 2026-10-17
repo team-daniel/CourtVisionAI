@@ -14,6 +14,7 @@ import {
   pointDistance,
 } from "../core/geometry";
 import { BasketballYolo } from "../inference/basketball-yolo";
+import { deduplicateDetections } from "../core/detection-suppression";
 
 export interface CropRecoveryOptions {
   enabled?: boolean;
@@ -25,6 +26,9 @@ export interface CropRecoveryOptions {
   recoveryMaximumDistance?: number;
   discoveryIntervalFrames?: number;
   effectiveFps?: number;
+  maxCropsPerFrame?: number;
+  recoveryIntervalFrames?: number;
+  ballSearchEnabled?: boolean;
 }
 
 export interface RecoveredStableDetection {
@@ -42,11 +46,12 @@ export interface CropRecoveryResult {
 interface CropRequest {
   cropBox: BoundingBox;
   target: RecoveryTarget | null;
+  ballOnly: boolean;
 }
 
 const REFERENCE_FPS = 30;
 const GROUP_DUPLICATE_IOU = 0.40;
-const SAME_CLASS_DUPLICATE_IOU = 0.85;
+const SAME_CLASS_DUPLICATE_IOU = 0.60; //0.85
 
 export class CropRecovery {
   private readonly detector: BasketballYolo;
@@ -58,6 +63,7 @@ export class CropRecovery {
   private readonly minimumCropSize: number;
   private readonly recoveryMaximumDistance: number;
   private readonly referenceDiscoveryIntervalFrames: number;
+  private readonly ballSearchEnabled: boolean;
 
   private effectiveFps = REFERENCE_FPS;
   private discoveryIntervalFrames = 15;
@@ -65,6 +71,10 @@ export class CropRecovery {
 
   private readonly cropCanvas: HTMLCanvasElement;
   private readonly cropContext: CanvasRenderingContext2D;
+
+  private readonly maxCropsPerFrame: number;
+  private readonly referenceRecoveryIntervalFrames: number;
+  private recoveryIntervalFrames = 1;
 
   constructor(
     detector: BasketballYolo,
@@ -78,6 +88,9 @@ export class CropRecovery {
       recoveryMaximumDistance = 0.35,
       discoveryIntervalFrames = 15,
       effectiveFps = REFERENCE_FPS,
+      maxCropsPerFrame = 1,
+      recoveryIntervalFrames = 4,
+      ballSearchEnabled = false,
     }: CropRecoveryOptions = {},
   ) {
     this.detector = detector;
@@ -88,10 +101,13 @@ export class CropRecovery {
     this.cropScale = cropScale;
     this.minimumCropSize = minimumCropSize;
     this.recoveryMaximumDistance = recoveryMaximumDistance;
-    this.referenceDiscoveryIntervalFrames =
-      discoveryIntervalFrames;
+    this.referenceDiscoveryIntervalFrames = discoveryIntervalFrames;
+    this.ballSearchEnabled = ballSearchEnabled;
 
     this.cropCanvas = document.createElement("canvas");
+
+    this.maxCropsPerFrame = Math.max(0, Math.floor(maxCropsPerFrame));
+    this.referenceRecoveryIntervalFrames = Math.max(1, recoveryIntervalFrames);
 
     const context = this.cropCanvas.getContext(
       "2d",
@@ -116,6 +132,10 @@ export class CropRecovery {
         / REFERENCE_FPS,
       ),
     );
+    this.recoveryIntervalFrames = Math.max(
+      1,
+      Math.ceil(this.referenceRecoveryIntervalFrames * this.effectiveFps / REFERENCE_FPS),
+    );
   }
 
   reset(): void {
@@ -131,7 +151,10 @@ export class CropRecovery {
   ): Promise<CropRecoveryResult> {
     this.frameIndex += 1;
 
-    if (!this.enabled) {
+    if (
+      !this.enabled
+      || this.frameIndex % this.recoveryIntervalFrames !== 0
+    ) {
       return {
         recoveries: [],
         mappedDetections: [],
@@ -148,6 +171,7 @@ export class CropRecovery {
     const addRequest = (
       box: BoundingBox,
       target: RecoveryTarget | null,
+      ballOnly = false,
     ): void => {
       const cropBox = makeCropBox(
         box,
@@ -166,11 +190,47 @@ export class CropRecovery {
       }
 
       cropKeys.add(cropKey);
-      requests.push({ cropBox, target });
+      requests.push({ cropBox, target, ballOnly });
     };
+
+    const missingBall = recoveryTargets
+      .filter((target) => target.group === "ball")
+      .sort((a, b) => a.missingFrames - b.missingFrames)[0];
+
+    const recentBall = missingBall && missingBall.missingFrames <= 4;
+
+    if (recentBall) {
+      addRequest(missingBall.predictedBox, missingBall);
+    } else if (this.ballSearchEnabled) {
+      const hasBall = preparedFullDetections.some(
+        (detection) =>
+          detection.classId === 0
+          && stableIdForByteTrack(detection.trackId) !== null,
+      );
+
+      if (!hasBall) {
+        const searchAreas = preparedFullDetections.filter(
+          (detection) =>
+            CLASS_GROUPS[detection.classId] === "player"
+            || detection.classId === 3,
+        );
+
+        if (searchAreas.length) {
+          const index = Math.floor(
+            this.frameIndex / this.recoveryIntervalFrames,
+          ) % searchAreas.length;
+
+          addRequest(searchAreas[index].box, null, true);
+        }
+      }
+    }
 
     // Match Python: discovery/refinement crops are selected from prepared
     // full-frame tracked detections before missing-track recovery crops.
+    for (const target of recoveryTargets) {
+      addRequest(target.predictedBox, target);
+    }
+
     if (this.discoveryEnabled) {
       const runDiscoverySweep = (
         !sceneAcquired
@@ -200,13 +260,15 @@ export class CropRecovery {
     }
 
     for (const target of recoveryTargets) {
-      addRequest(target.predictedBox, target);
+      if (target.group !== "ball") {
+        addRequest(target.predictedBox, target);
+      }
     }
 
     const recoveries: RecoveredStableDetection[] = [];
     const mappedDetections: Detection[] = [];
 
-    for (const request of requests) {
+    for (const request of requests.slice(0, this.maxCropsPerFrame)) {
       const [cropX1, cropY1, cropX2, cropY2] = request.cropBox;
       const cropWidth = Math.max(Math.round(cropX2 - cropX1), 1);
       const cropHeight = Math.max(Math.round(cropY2 - cropY1), 1);
@@ -233,9 +295,7 @@ export class CropRecovery {
         this.recoveryConfidence,
       );
 
-      const localDetections = deduplicateGroupDetections(
-        result.detections,
-      );
+      const localDetections = deduplicateDetections(result.detections);
 
       const mapped = localDetections.map(
         (detection): Detection => ({
@@ -251,9 +311,12 @@ export class CropRecovery {
         }),
       );
 
-      mappedDetections.push(...mapped);
-
       if (!request.target) {
+        mappedDetections.push(
+        ...(request.ballOnly
+          ? mapped.filter((detection) => detection.classId === 0)
+          : mapped),
+        );
         continue;
       }
 
@@ -306,7 +369,7 @@ export class CropRecovery {
     return {
       recoveries,
       mappedDetections,
-      cropCount: requests.length,
+      cropCount: Math.min(requests.length, this.maxCropsPerFrame),
       recoveryMilliseconds: performance.now() - startedAt,
     };
   }
@@ -347,61 +410,4 @@ function makeCropBox(
     Math.round(cropX1 + side),
     Math.round(cropY1 + side),
   ];
-}
-
-function deduplicateGroupDetections(
-  detections: readonly Detection[],
-): Detection[] {
-  const ordered = detections
-    .map((detection) => ({
-      ...detection,
-      box: [...detection.box] as BoundingBox,
-    }))
-    .sort(
-      (detectionA, detectionB) => (
-        detectionB.confidence - detectionA.confidence
-      ),
-    );
-
-  const kept: Detection[] = [];
-
-  for (const detection of ordered) {
-    const group = CLASS_GROUPS[detection.classId];
-    let duplicate: Detection | null = null;
-
-    for (const existing of kept) {
-      if (CLASS_GROUPS[existing.classId] !== group) {
-        continue;
-      }
-
-      const threshold = detection.classId === existing.classId
-        ? SAME_CLASS_DUPLICATE_IOU
-        : GROUP_DUPLICATE_IOU;
-
-      if (boxIou(detection.box, existing.box) >= threshold) {
-        duplicate = existing;
-        break;
-      }
-    }
-
-    if (!duplicate) {
-      kept.push(detection);
-      continue;
-    }
-
-    if (
-      SPECIFIC_CLASSES.has(detection.classId)
-      && !SPECIFIC_CLASSES.has(duplicate.classId)
-    ) {
-      duplicate.classId = detection.classId;
-      duplicate.className = detection.className;
-    }
-
-    duplicate.confidence = Math.max(
-      duplicate.confidence,
-      detection.confidence,
-    );
-  }
-
-  return kept;
 }

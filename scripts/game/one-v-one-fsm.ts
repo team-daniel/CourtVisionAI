@@ -85,6 +85,11 @@ export class OneVOneGameMode implements GameMode {
   private lastBasketBox: BoundingBox | null = null;
   private recentShooter: PlayerKey | null = null;
   private recentShootingFrames = 0;
+  private readonly shootingHistory: Record<PlayerKey, number[]> = {
+    A: [],
+    B: [],
+  };
+  private releaseShootingHits = 0;
   private releasePending = false;
   private releaseFrom: PlayerKey | null = null;
   private releaseFrames = 0;
@@ -100,8 +105,11 @@ export class OneVOneGameMode implements GameMode {
   private releaseShotEvidenceFrames = 0;
   private releaseReappearanceCandidate = false;
   private releaseFreshShotEvidence = false;
+  private releaseWithoutPossession = false;
+  private releaseApproachFrames = 0;
   private shooter: PlayerKey | null = null;
   private shotFrames = 0;
+  private semanticMadeFrames = 0;
   private shotMovedAwayFromBasket = false;
   private madePending = false;
   private madePathStart: Point | null = null;
@@ -202,8 +210,14 @@ export class OneVOneGameMode implements GameMode {
     this.releaseShotEvidenceFrames = 0;
     this.releaseReappearanceCandidate = false;
     this.releaseFreshShotEvidence = false;
+    this.releaseWithoutPossession = false;
+    this.releaseApproachFrames = 0;
     this.shooter = null;
     this.shotFrames = 0;
+    this.semanticMadeFrames = 0;
+    this.shootingHistory.A.length = 0;
+    this.shootingHistory.B.length = 0;
+    this.releaseShootingHits = 0;
     this.shotMovedAwayFromBasket = false;
     this.madePending = false;
     this.madePathStart = null;
@@ -254,6 +268,7 @@ export class OneVOneGameMode implements GameMode {
         ball,
         basket,
         ballInBasket,
+        semanticBallInBasket,
       );
       return this.snapshot();
     }
@@ -307,6 +322,28 @@ export class OneVOneGameMode implements GameMode {
 
       if (ballReleased) {
         this.startRelease(possessor);
+        this.updateReleasePending(
+          playerA,
+          playerB,
+          ball,
+          basket,
+          ballInBasket,
+          semanticBallInBasket,
+        );
+        return this.snapshot();
+      }
+    }
+
+    if (
+      this.state === NO_POSSESSION
+      && observedState === NO_POSSESSION
+      && this.recentShooter !== null
+      && this.recentShootingFrames > 0
+    ) {
+      const distance = this.lastDistances.get(this.recentShooter);
+
+      if (ball === null || (distance !== undefined && distance > this.maxBallDistance)) {
+        this.startRelease(this.recentShooter, true);
         this.updateReleasePending(
           playerA,
           playerB,
@@ -408,6 +445,12 @@ export class OneVOneGameMode implements GameMode {
         .map((detection) => detection.trackId),
     )).sort((idA, idB) => idA - idB);
 
+    if (playerIds.includes(-2) || playerIds.includes(-1)) {
+      this.playerAId = -2;
+      this.playerBId = -1;
+      return;
+    }
+
     if (this.playerAId === null && playerIds.length > 0) {
       this.playerAId = playerIds[0];
     }
@@ -496,6 +539,12 @@ export class OneVOneGameMode implements GameMode {
       detections,
       this.playerBId,
     );
+
+    for (const [key, seen] of [["A", shootingA], ["B", shootingB]] as const) {
+      const history = this.shootingHistory[key];
+      history.push(seen ? 1 : 0);
+      if (history.length > this.scaleFrames(10, 4)) history.shift();
+    }
 
     let detectedShooter: PlayerKey | null = null;
 
@@ -974,9 +1023,10 @@ export class OneVOneGameMode implements GameMode {
     );
   }
 
-  private startRelease(shooter: PlayerKey): void {
+  private startRelease(shooter: PlayerKey, withoutPossession = false): void {
     this.releasePending = true;
     this.releaseFrom = shooter;
+    this.releaseShootingHits = this.shootingHistory[shooter].reduce((sum, hit) => sum + hit, 0);
     this.releaseFrames = 0;
     this.releaseCandidateState = null;
     this.releaseCandidateFrames = 0;
@@ -993,6 +1043,8 @@ export class OneVOneGameMode implements GameMode {
     this.releaseShotEvidenceFrames = 0;
     this.releaseReappearanceCandidate = false;
     this.releaseFreshShotEvidence = false;
+    this.releaseWithoutPossession = withoutPossession;
+    this.releaseApproachFrames = 0;
     this.candidateState = null;
     this.candidateFrames = 0;
   }
@@ -1013,6 +1065,9 @@ export class OneVOneGameMode implements GameMode {
     this.releaseShotEvidenceFrames = 0;
     this.releaseReappearanceCandidate = false;
     this.releaseFreshShotEvidence = false;
+    this.releaseWithoutPossession = false;
+    this.releaseApproachFrames = 0;
+    this.releaseShootingHits = 0;
   }
 
   private updateReleaseCandidate(
@@ -1080,6 +1135,13 @@ export class OneVOneGameMode implements GameMode {
         && this.currentBasketDistance < this.previousBasketDistance
       );
 
+      this.releaseApproachFrames =
+        approachedBasketNow
+        && this.ballGapBeforeCurrent === 0
+        && this.previousBallCenter !== null
+          ? this.releaseApproachFrames + 1
+          : 0;
+
       if (approachedBasketNow) {
         this.releaseApproachedBasket = true;
       }
@@ -1100,13 +1162,17 @@ export class OneVOneGameMode implements GameMode {
         this.releaseNearBasket = true;
       }
 
-      freshPhysicalTrajectory = (
-        reachedBasketHeightNow
-        && (
-          nearBasketNow
-          || (movedAwayNow && approachedBasketNow)
-        )
-      );
+      freshPhysicalTrajectory = this.releaseWithoutPossession
+        ? (
+            this.releaseShootingSeen
+            && this.releaseApproachFrames >= 2
+            && reachedBasketHeightNow
+            && nearBasketNow
+          )
+        : (
+            reachedBasketHeightNow
+            && (nearBasketNow || (movedAwayNow && approachedBasketNow))
+          );
     }
 
     if (ballInBasket) {
@@ -1139,6 +1205,7 @@ export class OneVOneGameMode implements GameMode {
     }
 
     this.shotFrames = 0;
+    this.semanticMadeFrames = 0;
     this.shotMovedAwayFromBasket = false;
     this.clearMadePending();
     this.madeClearCounter = 0;
@@ -1165,6 +1232,15 @@ export class OneVOneGameMode implements GameMode {
     _semanticBallInBasket: boolean,
   ): BasketballGameState {
     this.releaseFrames += 1;
+
+    if (this.releaseFrom) {
+      this.releaseShootingHits = Math.max(
+        this.releaseShootingHits,
+        this.shootingHistory[this.releaseFrom].reduce(
+          (sum, hit) => sum + hit, 0,
+        ),
+      );
+    }
 
     const freshShotEvidence = this.updateReleaseEvidence(
       ball,
@@ -1238,6 +1314,24 @@ export class OneVOneGameMode implements GameMode {
       return this.state;
     }
 
+    const missingConfirmation = this.scaleFrames(8, 3);
+    const shooterVisible = this.releaseFrom === "A"
+      ? playerA !== null
+      : this.releaseFrom === "B" && playerB !== null;
+
+    if (
+      isPossessionState(this.state)
+      && this.releaseFrom !== null
+      && this.releaseShootingHits >= 2
+      && this.ballMissingFrames >= missingConfirmation
+      && this.releaseFrames >= missingConfirmation
+      && ball === null
+      && shooterVisible
+    ) {
+      this.startShot(this.releaseFrom);
+      return this.state;
+    }
+
     if (
       !playersOverlapping
       && isPossessionState(observedState)
@@ -1272,8 +1366,18 @@ export class OneVOneGameMode implements GameMode {
     ball: StableDetection | null,
     basket: StableDetection | null,
     ballInBasket: boolean,
+    semanticBallInBasket: boolean,
   ): BasketballGameState {
     this.shotFrames += 1;
+
+    this.semanticMadeFrames = semanticBallInBasket
+      ? this.semanticMadeFrames + 1
+      : 0;
+
+    if (this.semanticMadeFrames >= this.madeConfirmFrames) {
+      this.confirmMadeShot();
+      return this.state;
+    }
 
     if (
       this.currentBasketDistance !== null

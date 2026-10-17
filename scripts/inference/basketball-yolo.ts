@@ -5,6 +5,7 @@ import {
   type Detection,
   type FrameSource,
 } from "../core/detections";
+import { deduplicateDetections } from "../core/detection-suppression";
 
 const INPUT_SIZE = 960;
 const MAX_DETECTIONS = 10;
@@ -386,7 +387,8 @@ export class BasketballYolo {
         detectionB.confidence - detectionA.confidence,
     );
 
-    return detections.slice(0, MAX_DETECTIONS);
+    //return detections.slice(0, MAX_DETECTIONS);
+    return deduplicateDetections(detections).slice(0, MAX_DETECTIONS);
   }
 }
 

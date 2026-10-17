@@ -26,6 +26,7 @@ export interface SessionRecorderOptions {
 export class SessionRecorder {
   private readonly options: SessionRecorderOptions;
   private readonly frames: PlaybackFrame[] = [];
+  private readonly frameByIndex = new Map<number, PlaybackFrame>();
   private readonly events: SessionEvent[] = [];
   private readonly pendingAttempts = new Map<
     SessionParticipantKey,
@@ -41,19 +42,21 @@ export class SessionRecorder {
   }
 
   addFrame(result: PipelineFrameResult): void {
-    const game = cloneGame(result.game);
+    for (const correction of result.corrections) {
+      const frame = this.frameByIndex.get(correction.frameIndex);
+      if (!frame) continue;
+      frame.detections = correction.detections.map(compactDetection);
+      frame.game = cloneGame(correction.game);
+    }
 
-    this.frames.push({
+    const frame: PlaybackFrame = {
       frameIndex: result.frameIndex,
       timestampSeconds: result.timestampSeconds,
       detections: result.detections.map(compactDetection),
-      game,
-    });
-
-    this.captureShotEvents(game, result.timestampSeconds);
-    this.captureReboundEvents(game, result.timestampSeconds);
-    this.capturePossession(game, result.timestampSeconds);
-    this.previousGame = game;
+      game: cloneGame(result.game),
+    };
+    this.frames.push(frame);
+    this.frameByIndex.set(result.frameIndex, frame);
   }
 
   build(): StoredSession {
@@ -62,6 +65,8 @@ export class SessionRecorder {
         "No analysed frames were available to save.",
       );
     }
+
+    this.rebuildEvents();
 
     const finalFrame = this.frames[this.frames.length - 1];
     const finalGame = cloneGame(finalFrame.game);
@@ -117,6 +122,21 @@ export class SessionRecorder {
         ),
       },
     };
+  }
+
+  private rebuildEvents(): void {
+    this.events.length = 0;
+    this.pendingAttempts.clear();
+    this.previousGame = null;
+    this.possessionCount = 0;
+    this.eventSequence = 0;
+
+    for (const frame of this.frames) {
+      this.captureShotEvents(frame.game, frame.timestampSeconds);
+      this.captureReboundEvents(frame.game, frame.timestampSeconds);
+      this.capturePossession(frame.game, frame.timestampSeconds);
+      this.previousGame = frame.game;
+    }
   }
 
   private captureReboundEvents(

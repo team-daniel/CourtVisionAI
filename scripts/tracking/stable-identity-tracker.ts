@@ -21,6 +21,7 @@ import {
   pointDistance,
   translateBox,
 } from "../core/geometry";
+import { deduplicateDetections, samePlayerBox } from "../core/detection-suppression";
 
 export interface StableIdentityTrackerOptions {
   maxMissingFrames?: number;
@@ -63,7 +64,7 @@ interface Promotion {
 
 const REFERENCE_FPS = 30;
 const GROUP_DUPLICATE_IOU = 0.40;
-const SAME_CLASS_DUPLICATE_IOU = 0.85;
+const SAME_CLASS_DUPLICATE_IOU = 0.60; //0.85
 const NEW_OBJECT_CONFIDENCE = 0.50;
 
 export class StableIdentityTracker {
@@ -459,8 +460,19 @@ export class StableIdentityTracker {
   ): void {
     this.requireOpenFrame();
 
-    if (!this.tracks.has(stableId)) {
-      return;
+    const track = this.tracks.get(stableId);
+
+    if (!track || this.currentOutput.has(stableId)) return;
+    if (CLASS_GROUPS[detection.classId] !== track.group) return;
+
+    if (track.group === "player") {
+      const duplicate = Array.from(this.currentOutput.values()).some(
+        (current) =>
+          CLASS_GROUPS[current.classId] === "player"
+          && samePlayerBox(current.box, detection.box),
+      );
+
+      if (duplicate) return;
     }
 
     const recovered = this.updateStableTrack(
@@ -484,7 +496,7 @@ export class StableIdentityTracker {
   ): void {
     this.requireOpenFrame();
 
-    const mappedDetections = this.deduplicateGroupDetections(
+    const mappedDetections = deduplicateDetections(
       detections.map((detection) => ({
         ...detection,
         box: [...detection.box],
@@ -494,9 +506,11 @@ export class StableIdentityTracker {
     );
 
     for (const cropDetection of mappedDetections) {
-      if (cropDetection.confidence < NEW_OBJECT_CONFIDENCE) {
-        continue;
-      }
+      const threshold = cropDetection.classId === 0
+        ? 0.35
+        : NEW_OBJECT_CONFIDENCE;
+
+      if (cropDetection.confidence < threshold) continue;
 
       let matchedStableId: number | null = null;
 
@@ -655,67 +669,7 @@ export class StableIdentityTracker {
       }
     }
 
-    return this.deduplicateGroupDetections(
-      Array.from(bestByByteId.values()),
-    ) as ByteTrackedDetection[];
-  }
-
-  private deduplicateGroupDetections<T extends CandidateDetection>(
-    detections: readonly T[],
-  ): T[] {
-    const ordered = detections
-      .map((detection) => ({
-        ...detection,
-        box: [...detection.box] as BoundingBox,
-      }))
-      .sort(
-        (detectionA, detectionB) => (
-          detectionB.confidence - detectionA.confidence
-        ),
-      ) as T[];
-
-    const kept: T[] = [];
-
-    for (const detection of ordered) {
-      const group = CLASS_GROUPS[detection.classId];
-      let duplicate: T | null = null;
-
-      for (const existing of kept) {
-        if (CLASS_GROUPS[existing.classId] !== group) {
-          continue;
-        }
-
-        const iou = boxIou(detection.box, existing.box);
-        const threshold = detection.classId === existing.classId
-          ? SAME_CLASS_DUPLICATE_IOU
-          : GROUP_DUPLICATE_IOU;
-
-        if (iou >= threshold) {
-          duplicate = existing;
-          break;
-        }
-      }
-
-      if (!duplicate) {
-        kept.push(detection);
-        continue;
-      }
-
-      if (
-        SPECIFIC_CLASSES.has(detection.classId)
-        && !SPECIFIC_CLASSES.has(duplicate.classId)
-      ) {
-        duplicate.classId = detection.classId;
-        duplicate.className = detection.className;
-      }
-
-      duplicate.confidence = Math.max(
-        duplicate.confidence,
-        detection.confidence,
-      );
-    }
-
-    return kept;
+    return deduplicateDetections(Array.from(bestByByteId.values()));
   }
 
   private associationScore(
@@ -1027,11 +981,37 @@ export class StableIdentityTracker {
     }
   }
 
+  private isDuplicatePlayer(box: BoundingBox): boolean {
+    return Array.from(this.tracks.values()).some((track) => {
+      if (track.group !== "player") return false;
+
+      const age = this.frameIndex - track.lastSeenFrame;
+      if (age > Math.max(this.confirmHits, 5)) return false;
+
+      const reference = age === 0
+        ? track.box
+        : this.predictedBox(track);
+
+      return samePlayerBox(box, reference);
+    });
+  }
+
   private handleUnmatchedDetection(
     detection: CandidateDetection,
     frameWidth: number,
     frameHeight: number,
   ): Promotion | null {
+    if (
+      CLASS_GROUPS[detection.classId] === "player"
+      && this.isDuplicatePlayer(detection.box)
+    ) {
+      if (detection.trackId !== null) {
+        const tentativeId = this.byteToTentative.get(detection.trackId);
+        if (tentativeId !== undefined) this.removeTentativeTrack(tentativeId);
+      }
+      return null;
+    }
+
     let tentativeId = detection.trackId === null
       ? undefined
       : this.byteToTentative.get(detection.trackId);
@@ -1069,7 +1049,9 @@ export class StableIdentityTracker {
 
     const tentative = this.tentativeTracks.get(tentativeId);
 
-    if (!tentative || tentative.hits < this.confirmHits) {
+    if (!tentative || tentative.hits < (
+      tentative.group === "ball" ? 2 : this.confirmHits
+    )) {
       return null;
     }
 
@@ -1346,7 +1328,7 @@ export class StableIdentityTracker {
           + histogramDistance(previousHistogramB, currentHistogramA)
         );
 
-        if (swappedCost < currentCost) {
+        if (swappedCost + 0.1 < currentCost) {
           this.tracks.set(stableIdA, cloneTrack(snapshotA));
           this.tracks.set(stableIdB, cloneTrack(snapshotB));
 
