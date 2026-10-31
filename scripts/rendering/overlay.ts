@@ -83,6 +83,7 @@ function drawDetections(
   context.textBaseline = "alphabetic";
 
   for (const detection of detections) {
+    if (detection.state === "reference") continue;
     const x1 = detection.box[0] * scale;
     const y1 = detection.box[1] * scale;
     const x2 = detection.box[2] * scale;
@@ -107,9 +108,7 @@ function drawDetections(
       detection.trackId,
     );
 
-    const label = participantLabel
-      ? `${participantLabel} · ${detection.className}`
-      : `${detection.className} · ID ${detection.trackId}`;
+    const label = detection.classId === 0 ? "Ball" : detection.classId === 2 ? "Basket" : participantLabel?.replace(/^Participant /, "Player ") ?? "Player";
 
     const textMetrics = context.measureText(label);
     const textHeight = Math.max(fontSize + 9, 24);
@@ -191,7 +190,7 @@ function drawGameStatus(
     [
       `${result.timings.totalMilliseconds.toFixed(0)} ms/frame`,
       `${result.detections.length} tracked`,
-      `${result.timings.recoveryCropCount} recovery crops`,
+      result.motion.valid ? "Camera motion measured" : "Camera motion uncertain",
     ].join(" · "),
     padding * 1.6,
     padding + titleSize + bodySize * 2 + 22,
@@ -215,16 +214,9 @@ function detectionColour(
       return "#ff4f0a";
 
     case 1:
-      return "#20b35a";
-
-    case 2:
       return "#ffb13b";
-
-    case 3:
+    case 2:
       return "#20b35a";
-
-    case 4:
-      return "#a45de8";
   }
 }
 

@@ -43,6 +43,7 @@ export function drawPlaybackOverlay(
   }
 
   for (const detection of frame.detections) {
+    if (detection.state === "reference") continue;
     drawDetection(
       context,
       detection,
@@ -123,10 +124,6 @@ function detectionLabel(
   participantLabel: string | null,
 ): string {
   if (participantLabel) {
-    if (detection.classId === 4) {
-      return `${participantLabel} · Shooting`;
-    }
-
     return participantLabel;
   }
 
@@ -134,10 +131,7 @@ function detectionLabel(
     case 0:
       return "Ball";
 
-    case 1:
-      return "Ball in basket";
-
-    case 3:
+    case 2:
       return "Basket";
 
     default:
@@ -164,16 +158,9 @@ function detectionColour(
       return "#ff5a16";
 
     case 1:
-      return "#25ad55";
-
-    case 2:
       return "#ff9a45";
-
-    case 3:
+    case 2:
       return "#25ad55";
-
-    case 4:
-      return "#9156d8";
   }
 }
 

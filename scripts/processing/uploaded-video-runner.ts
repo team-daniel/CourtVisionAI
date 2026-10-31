@@ -294,7 +294,9 @@ function seekVideo(
   }
 
   return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => { cleanup(); reject(new Error("The video seek timed out.")); }, 15000);
     const cleanup = (): void => {
+      clearTimeout(timeout);
       video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("error", onError);
     };

@@ -1,3 +1,5 @@
+import { confirmMatch } from "./ui/match-selection";
+import { ParticipantThumbnails } from "./ui/participant-thumbnails";
 import type { GameModeId } from "./game/game-mode";
 import {
   BasketballPipeline,
@@ -12,7 +14,6 @@ import { drawPipelineFrame } from "./rendering/overlay";
 import { SessionRecorder } from "./session/session-recorder";
 import { saveSession } from "./storage/session-store";
 
-// Set this to the exact frame_stride used by the Python reference run.
 type AnalysisQuality =
   | "full"
   | "balanced"
@@ -22,7 +23,7 @@ const ANALYSIS_TARGET_FPS: Record<
   AnalysisQuality,
   number
 > = {
-  full: 30,
+  full: Infinity,
   balanced: 15,
   fast: 10,
 };
@@ -91,6 +92,8 @@ analysisVideo.preload = "auto";
 let selectedVideoUrl: string | null = null;
 let analysing = false;
 let analysisCancelled = false;
+let analysisAbort = new AbortController();
+analysisQualitySelect.value = "full";
 
 videoInput.addEventListener(
   "change",
@@ -117,6 +120,7 @@ gameModeSelect.addEventListener("change", (): void => {
 
 cancelButton.addEventListener("click", (): void => {
   analysisCancelled = true;
+  analysisAbort.abort();
   runner.cancel();
 
   cancelButton.disabled = true;
@@ -141,6 +145,7 @@ async function startAnalysis(file: File): Promise<void> {
   }
 
   analysisCancelled = false;
+  analysisAbort = new AbortController();
   requestPersistentStorage()
 
   analysing = true;
@@ -174,6 +179,7 @@ async function startAnalysis(file: File): Promise<void> {
 
     const selectedQuality = analysisQualitySelect.value as AnalysisQuality;
 
+    await pipeline.dispose();
     pipeline = new BasketballPipeline({
       gameMode: getSelectedGameMode(),
       effectiveFps: analysedFramesPerSecond,
@@ -188,7 +194,7 @@ async function startAnalysis(file: File): Promise<void> {
       formatDuration(videoInfo.durationSeconds),
     ].join(" · ");
 
-    analysisStatus.textContent = "Loading the basketball model…";
+    analysisStatus.textContent = "Loading models and camera tracking…";
     analysisDetail.textContent = "The first run can take a little longer";
     await pipeline.load();
 
@@ -206,7 +212,7 @@ async function startAnalysis(file: File): Promise<void> {
       analysedFramesPerSecond,
     });
 
-    const thumbnailCollector = new PlayerThumbnailCollector();
+    const thumbnailCollector = new ParticipantThumbnails();
 
     analysisStatus.textContent = "Analysing your game…";
     analysisDetail.textContent =
@@ -225,13 +231,6 @@ async function startAnalysis(file: File): Promise<void> {
           result,
           frameCanvas,
         }): void => {
-          recorder.addFrame(result);
-
-          thumbnailCollector.update(
-            frameCanvas,
-            result,
-            pipeline,
-          );
 
           drawPipelineFrame(
             previewCanvas,
@@ -251,7 +250,7 @@ async function startAnalysis(file: File): Promise<void> {
             `Frame ${frameIndex + 1} of ${totalFrames}`,
             result.executionProvider,
             `${result.detections.length} tracked`,
-            `${result.timings.recoveryCropCount} recovery crops`,
+            result.motion.valid ? "camera motion measured" : "camera motion uncertain",
           ].join(" · ");
 
           updateGameStats(result.game);
@@ -276,9 +275,19 @@ async function startAnalysis(file: File): Promise<void> {
       return;
     }
 
-    const session = recorder.build();
-    session.playerAThumbnail = thumbnailCollector.getThumbnail("A");
-    session.playerBThumbnail = thumbnailCollector.getThumbnail("B");
+    analysisStatus.textContent = "Resolving player identities and shot events…";
+    const completed = await pipeline.finish(() => analysisCancelled);
+    analysisStatus.textContent = "Preparing player photos…";
+    await thumbnailCollector.build(analysisVideo, completed, undefined, analysisAbort.signal);
+    analysisStatus.textContent = "Confirm the two competitors";
+    analysisDetail.textContent = "Choose the players from the detected participants";
+    const pair = await confirmMatch(completed, thumbnailCollector.images, analysisAbort.signal);
+    if (!pair || analysisCancelled) { resetUploadPage(); return; }
+    analysisStatus.textContent = "Preparing the selected players’ photos…";
+    await thumbnailCollector.build(analysisVideo, completed, pair, analysisAbort.signal);
+    if (analysisCancelled) { resetUploadPage(); return; }
+    const session = recorder.build(completed, pair, thumbnailCollector.images);
+    analysisStatus.textContent = "Saving session…";
     await saveSession(session);
 
     analysisStatus.textContent = "Analysis complete";
@@ -289,6 +298,7 @@ async function startAnalysis(file: File): Promise<void> {
       `./session.html?id=${encodeURIComponent(session.id)}`,
     );
   } catch (error: unknown) {
+    if (analysisCancelled) { resetUploadPage(); return; }
     console.error(error);
     showError(
       error instanceof Error
@@ -296,6 +306,7 @@ async function startAnalysis(file: File): Promise<void> {
         : "Video analysis failed.",
     );
   } finally {
+    await pipeline.dispose();
     analysing = false;
   }
 }
@@ -384,6 +395,7 @@ function resetUploadPage(): void {
   recordingGuidance.hidden = false;
   cancelButton.hidden = true;
   analysisCancelled = false;
+  analysisAbort = new AbortController();
   cancelButton.disabled = false;
   chooseAnotherButton.hidden = true;
   resetProgress();
@@ -441,6 +453,14 @@ function friendlyState(state: string): string {
       return "Player B possession";
     case "SHOT ATTEMPT":
       return "Shot attempt";
+    case "SHOT MISSED":
+      return "Shot missed";
+    case "UNRESOLVED SHOT":
+      return "Shot outcome unresolved";
+    case "RELEASE CANDIDATE":
+      return "Checking release";
+    case "OTHER PLAYER POSSESSION":
+      return "Other player possession";
     case "SHOT MADE":
       return "Shot made";
     default:
@@ -490,287 +510,6 @@ function waitForMediaEvent(
     target.addEventListener(eventName, onEvent, { once: true });
     target.addEventListener("error", onError, { once: true });
   });
-}
-
-type ThumbnailPlayer = "A" | "B";
-
-interface ThumbnailCandidate {
-  score: number;
-  image: string | null;
-}
-
-class PlayerThumbnailCollector {
-  private readonly candidates: Record<
-    ThumbnailPlayer,
-    ThumbnailCandidate
-  > = {
-    A: {
-      score: Number.NEGATIVE_INFINITY,
-      image: null,
-    },
-    B: {
-      score: Number.NEGATIVE_INFINITY,
-      image: null,
-    },
-  };
-
-  private captureStartedAt: number | null = null;
-  private lastSampleAt = Number.NEGATIVE_INFINITY;
-
-  update(
-    frame: HTMLCanvasElement,
-    result: PipelineFrameResult,
-    pipeline: BasketballPipeline,
-  ): void {
-    const players = result.detections
-      .filter(
-        (detection) =>
-          detection.classId === 2
-          || detection.classId === 4,
-      )
-      .map((detection) => ({
-        detection,
-        label: pipeline.playerLabel(
-          detection.trackId,
-        ),
-      }));
-
-    const playerA = players.find(
-      (player) =>
-        player.label === "Player A",
-    )?.detection;
-
-    const playerB = players.find(
-      (player) =>
-        player.label === "Player B",
-    )?.detection;
-
-    // Wait until both players have actually been identified.
-    if (!playerA || !playerB) {
-      return;
-    }
-
-    if (this.captureStartedAt === null) {
-      this.captureStartedAt =
-        result.timestampSeconds;
-    }
-
-    const timeSinceIdentification =
-      result.timestampSeconds
-      - this.captureStartedAt;
-
-    // Search for the best crop for four seconds.
-    if (timeSinceIdentification > 4) {
-      return;
-    }
-
-    // No need to create a JPEG every single analysed frame.
-    if (
-      result.timestampSeconds
-      - this.lastSampleAt
-      < 0.25
-    ) {
-      return;
-    }
-
-    this.lastSampleAt =
-      result.timestampSeconds;
-
-    this.considerPlayer(
-      "A",
-      playerA,
-      playerB,
-      frame,
-    );
-
-    this.considerPlayer(
-      "B",
-      playerB,
-      playerA,
-      frame,
-    );
-  }
-
-  getThumbnail(
-    player: ThumbnailPlayer,
-  ): string | null {
-    return this.candidates[player].image;
-  }
-
-  private considerPlayer(
-    player: ThumbnailPlayer,
-    detection: PipelineFrameResult["detections"][number],
-    otherPlayer: PipelineFrameResult["detections"][number],
-    frame: HTMLCanvasElement,
-  ): void {
-    // Don't capture while the players are overlapping.
-    if (
-      boxesOverlap(
-        detection.box,
-        otherPlayer.box,
-      )
-    ) {
-      return;
-    }
-
-    const [
-      x1,
-      y1,
-      x2,
-      y2,
-    ] = detection.box;
-
-    const playerWidth =
-      Math.max(x2 - x1, 1);
-
-    const playerHeight =
-      Math.max(y2 - y1, 1);
-
-    // Avoid detections cut off by the edge of the video.
-    if (
-      x1 <= 1
-      || y1 <= 1
-      || x2 >= frame.width - 1
-      || y2 >= frame.height - 1
-    ) {
-      return;
-    }
-
-    const relativeHeight =
-      playerHeight / frame.height;
-
-    const score =
-      detection.confidence
-      * relativeHeight;
-
-    if (
-      score
-      <= this.candidates[player].score
-    ) {
-      return;
-    }
-
-    const thumbnail =
-      makePlayerHeadThumbnail(
-        frame,
-        detection.box,
-      );
-
-    if (!thumbnail) {
-      return;
-    }
-
-    this.candidates[player] = {
-      score,
-      image: thumbnail,
-    };
-  }
-}
-
-function makePlayerHeadThumbnail(
-  frame: HTMLCanvasElement,
-  box: readonly number[],
-): string | null {
-  const [x1, y1, x2, y2] = box;
-
-  const playerWidth =
-    Math.max(x2 - x1, 1);
-
-  const playerHeight =
-    Math.max(y2 - y1, 1);
-
-  /*
-   * Slightly larger crop so we get more of the head
-   * and a bit of the shoulders instead of a tight face crop.
-   */
-  const cropSize = Math.min(
-    Math.max(
-      playerWidth * 1.05,
-      playerHeight * 0.36,
-    ),
-    playerHeight * 0.70,
-    frame.width,
-    frame.height,
-  );
-
-  if (cropSize < 4) {
-    return null;
-  }
-
-  const centreX =
-    x1 + playerWidth * 0.5;
-
-  /*
-   * Move the crop centre slightly lower than before
-   * so it includes a bit more of the upper body.
-   */
-  const centreY =
-    y1 + playerHeight * 0.20;
-
-  const cropX = clamp(
-    centreX - cropSize / 2,
-    0,
-    frame.width - cropSize,
-  );
-
-  const cropY = clamp(
-    centreY - cropSize / 2,
-    0,
-    frame.height - cropSize,
-  );
-
-  const thumbnail =
-    document.createElement("canvas");
-
-  thumbnail.width = 160;
-  thumbnail.height = 160;
-
-  const context =
-    thumbnail.getContext("2d");
-
-  if (!context) {
-    return null;
-  }
-
-  context.drawImage(
-    frame,
-    cropX,
-    cropY,
-    cropSize,
-    cropSize,
-    0,
-    0,
-    thumbnail.width,
-    thumbnail.height,
-  );
-
-  return thumbnail.toDataURL(
-    "image/jpeg",
-    0.88,
-  );
-}
-
-function boxesOverlap(
-  boxA: readonly number[],
-  boxB: readonly number[],
-): boolean {
-  return (
-    Math.min(boxA[2], boxB[2])
-      > Math.max(boxA[0], boxB[0])
-    && Math.min(boxA[3], boxB[3])
-      > Math.max(boxA[1], boxB[1])
-  );
-}
-
-function clamp(
-  value: number,
-  minimum: number,
-  maximum: number,
-): number {
-  return Math.min(
-    Math.max(value, minimum),
-    maximum,
-  );
 }
 
 function requestPersistentStorage(): void {

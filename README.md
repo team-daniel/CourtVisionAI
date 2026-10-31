@@ -2,7 +2,7 @@
 
 Browser-based basketball video analysis for tracking players, possessions and shot statistics from recorded footage.
 
-CourtVisionAI runs analysis directly in the browser, using an ONNX basketball detector, multi-object tracking and a lightweight finite-state machine (FSM) to turn detections into useful basketball statistics.
+CourtVisionAI combines a basketball detector, appearance-based player re-identification, camera-motion estimation and a basketball finite-state machine (FSM). Analysis runs locally in the browser, with tracked playback, player statistics and video export available after processing.
 
 [![](https://img.shields.io/badge/Live_Demo-ff4f0a?style=for-the-badge&logo=netlify&logoColor=white&label=&labelColor=4b4b4b)](https://courtvisionaiapp.netlify.app/)
 [![](https://img.shields.io/badge/TikTok-000000?style=for-the-badge&logo=tiktok&logoColor=white&label=&labelColor=4b4b4b)](https://www.tiktok.com/@pintsizeai)
@@ -31,7 +31,7 @@ Upload video
     ↓
 Basketball detection
     ↓
-ByteTrack + stable identities
+Deep-EIoU + OSNet + stable identities
     ↓
 Basketball-specific FSM
     ↓
@@ -51,15 +51,17 @@ The focus is currently on simple side-view basketball footage where the basket, 
 ### Implemented
 
 - Browser-based ONNX basketball inference
-- Multi-object tracking with ByteTrack
-- Stable player identities for 1v1 games
-- Ball and player recovery logic for short detector dropouts
+- Player tracking with Deep-EIoU and OSNet appearance embeddings
+- Persistent player identities across tracking gaps
+- Ball tracking and camera-adjusted basket memory through short detection gaps
+- Post-analysis competitor selection and optional merging of duplicate identities
 - 1v1 finite-state machine for:
   - possession
   - shot releases
   - shot attempts
   - made shots
   - missed shots
+  - unresolved shot outcomes
   - rebounds
 - Player-specific statistics:
   - field goals made
@@ -67,10 +69,10 @@ The focus is currently on simple side-view basketball footage where the basket, 
   - field-goal percentage
   - rebounds
 - Adjustable analysis quality:
-  - Full - 30 FPS target
+  - Full - no frame skipping
   - Balanced - 15 FPS target
   - Fast - 10 FPS target
-- Player thumbnail capture
+- Player thumbnails selected after identity resolution
 - Timestamp-synchronised session playback
 - Detection overlays during playback
 - Event timeline
@@ -112,8 +114,9 @@ Then:
 2. Choose a recorded basketball video.
 3. Select the game mode and analysis quality.
 4. Wait for the local analysis to complete.
-5. View the tracked session with timestamp-synchronised statistics and events.
-6. Export the analysed video if you want a shareable version.
+5. Review the detected players, merge duplicate identities if needed, and confirm the two competitors.
+6. View the tracked session with timestamp-synchronised statistics and events.
+7. Export the analysed video if you want a shareable version.
 
 For the best results, keep the camera stable and try to keep the players, basketball and basket visible throughout the clip.
 
@@ -154,7 +157,8 @@ npm run dev
 CourtVisionAI/
 ├── assets/
 │   ├── icons/
-│   └── models/
+├── models/
+├── vendor/
 ├── pages/
 │   ├── upload.html
 │   ├── history.html
@@ -165,6 +169,11 @@ CourtVisionAI/
 │   ├── rendering/
 │   ├── session/
 │   ├── storage/
+│   ├── core/
+│   ├── events/
+│   ├── inference/
+│   ├── tracking/
+│   ├── ui/
 │   └── export/
 ├── styles/
 │   ├── global.css
@@ -188,17 +197,17 @@ CourtVisionAI separates perception from game logic.
 
 ### 1. Detection
 
-Each analysed frame is passed through the basketball ONNX detector.
+Each analysed frame is passed through the basketball ONNX detector, with separate passes for player/basket detection and higher-resolution ball detection.
 
 ### 2. Tracking
 
-Detections are passed through ByteTrack and then through an additional stable-identity layer.
+Player detections are matched using Deep-EIoU and OSNet appearance embeddings, then passed through a persistent participant-identity layer.
 
 This helps preserve player identities when detections briefly disappear or overlap.
 
 ### 3. Recovery
 
-When useful objects disappear temporarily, recovery crops can be analysed to try to recover them without rerunning the entire frame at a larger resolution.
+Recent ball and basket positions are retained through short detection gaps and adjusted using camera movement estimated with OpenCV optical flow. Player identities can be recovered through appearance matching, with earlier event attribution updated when identities are resolved.
 
 ### 4. Game-state logic
 
@@ -209,11 +218,11 @@ No possession
 → Player possession
 → Release
 → Shot attempt
-→ Made / missed
+→ Made / missed / unresolved
 → Next possession
 ```
 
-The FSM is deliberately separate from the detector so basketball rules can evolve without retraining the vision model.
+The FSM is deliberately separate from the detector so basketball rules can evolve without retraining the vision model. Shots remain unresolved when there is insufficient evidence to determine the outcome.
 
 ---
 
@@ -229,9 +238,10 @@ A session contains the original video together with:
 - player statistics
 - events
 - player thumbnails
+- selected competitors and participant identities
 - session metadata
 
-This allows the playback page to recreate the analysis without running the detector again.
+This allows the playback page to recreate the analysis without running the detector again. Match statistics use the two confirmed competitors, while other participants and unresolved events remain in the saved analysis.
 
 Because sessions are stored locally, they remain specific to the browser/device in which they were analysed.
 
@@ -268,6 +278,10 @@ Uploaded videos are analysed on the user's device and sessions are stored in loc
 - TypeScript
 - Vite
 - ONNX Runtime Web
+- Custom YOLO basketball detector
+- Deep-EIoU tracking
+- OSNet appearance embeddings
+- OpenCV.js
 - HTML Canvas
 - IndexedDB
 - Netlify

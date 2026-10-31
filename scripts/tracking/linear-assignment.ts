@@ -1,151 +1,35 @@
-export interface AssignmentResult {
-  matches: Array<[number, number]>;
-  unmatchedRows: number[];
-  unmatchedColumns: number[];
-}
+export interface AssignmentResult { matches: Array<[number, number]>; unmatchedRows: number[]; unmatchedColumns: number[] }
 
-interface CandidateResult {
-  matches: Array<[number, number]>;
-  count: number;
-  cost: number;
-}
-
-/**
- * Cost-limited one-to-one assignment.
- *
- * Ultralytics uses LAPJV. The app normally has at most ten detections, so a
- * bitmask dynamic programme can optimise the same primary objective without a
- * native dependency: maximise valid matches, then minimise total cost.
- */
-export function linearAssignment(
-  costs: readonly (readonly number[])[],
-  threshold: number,
-  columnCountHint = 0,
-): AssignmentResult {
-  const rowCount = costs.length;
-  const columnCount = rowCount > 0
-    ? costs[0].length
-    : columnCountHint;
-
-  if (rowCount === 0 || columnCount === 0) {
-    return {
-      matches: [],
-      unmatchedRows: Array.from(
-        { length: rowCount },
-        (_, index) => index,
-      ),
-      unmatchedColumns: Array.from(
-        { length: columnCount },
-        (_, index) => index,
-      ),
-    };
-  }
-
-  if (columnCount > 20) {
-    throw new Error(
-      "ByteTrack assignment supports at most 20 detections per frame.",
-    );
-  }
-
-  const memo = new Map<string, CandidateResult>();
-
-  const solve = (
-    rowIndex: number,
-    usedColumns: number,
-  ): CandidateResult => {
-    if (rowIndex >= rowCount) {
-      return {
-        matches: [],
-        count: 0,
-        cost: 0,
-      };
-    }
-
-    const key = `${rowIndex}:${usedColumns}`;
-    const cached = memo.get(key);
-
-    if (cached) {
-      return cached;
-    }
-
-    let best = solve(rowIndex + 1, usedColumns);
-
-    for (
-      let columnIndex = 0;
-      columnIndex < columnCount;
-      columnIndex += 1
-    ) {
-      const columnMask = 1 << columnIndex;
-      const cost = costs[rowIndex][columnIndex];
-
-      if (
-        (usedColumns & columnMask) !== 0
-        || !Number.isFinite(cost)
-        || cost > threshold
-      ) {
-        continue;
+export function linearAssignment(costs: readonly (readonly number[])[], threshold: number, columnCountHint = 0): AssignmentResult {
+  const rows = costs.length, columns = rows ? costs[0].length : columnCountHint, size = rows + columns;
+  const matrix = Array.from({ length: size }, (_, i) => Array.from({ length: size }, (_, j) => {
+    if (i >= rows && j >= columns) return 0;
+    if (i >= rows || j >= columns) return threshold / 2;
+    return Number.isFinite(costs[i][j]) && costs[i][j] <= threshold ? costs[i][j] : 1e6;
+  }));
+  const u = new Float64Array(size + 1), v = new Float64Array(size + 1), p = new Int32Array(size + 1), way = new Int32Array(size + 1);
+  for (let i = 1; i <= size; i++) {
+    p[0] = i;
+    let j0 = 0;
+    const min = new Float64Array(size + 1).fill(Infinity), used = new Uint8Array(size + 1);
+    do {
+      used[j0] = 1;
+      const i0 = p[j0];
+      let delta = Infinity, j1 = 0;
+      for (let j = 1; j <= size; j++) if (!used[j]) {
+        const value = matrix[i0 - 1][j - 1] - u[i0] - v[j];
+        if (value < min[j]) { min[j] = value; way[j] = j0; }
+        if (min[j] < delta) { delta = min[j]; j1 = j; }
       }
-
-      const remainder = solve(
-        rowIndex + 1,
-        usedColumns | columnMask,
-      );
-
-      const candidate: CandidateResult = {
-        matches: [
-          [rowIndex, columnIndex],
-          ...remainder.matches,
-        ],
-        count: remainder.count + 1,
-        cost: remainder.cost + cost,
-      };
-
-      if (isBetter(candidate, best)) {
-        best = candidate;
+      for (let j = 0; j <= size; j++) {
+        if (used[j]) { u[p[j]] += delta; v[j] -= delta; } else min[j] -= delta;
       }
-    }
-
-    memo.set(key, best);
-    return best;
-  };
-
-  const result = solve(0, 0);
-  const matchedRows = new Set(
-    result.matches.map(([row]) => row),
-  );
-  const matchedColumns = new Set(
-    result.matches.map(([, column]) => column),
-  );
-
-  return {
-    matches: result.matches,
-    unmatchedRows: Array.from(
-      { length: rowCount },
-      (_, index) => index,
-    ).filter((index) => !matchedRows.has(index)),
-    unmatchedColumns: Array.from(
-      { length: columnCount },
-      (_, index) => index,
-    ).filter((index) => !matchedColumns.has(index)),
-  };
-}
-
-function isBetter(
-  candidate: CandidateResult,
-  current: CandidateResult,
-): boolean {
-  if (candidate.count !== current.count) {
-    return candidate.count > current.count;
+      j0 = j1;
+    } while (p[j0] !== 0);
+    do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while (j0 !== 0);
   }
-
-  if (Math.abs(candidate.cost - current.cost) > 1e-12) {
-    return candidate.cost < current.cost;
-  }
-
-  return candidate.matches
-    .map(([row, column]) => `${row}:${column}`)
-    .join("|")
-    < current.matches
-      .map(([row, column]) => `${row}:${column}`)
-      .join("|");
+  const matches: Array<[number, number]> = [];
+  for (let j = 1; j <= columns; j++) if (p[j] > 0 && p[j] <= rows && costs[p[j] - 1][j - 1] <= threshold) matches.push([p[j] - 1, j - 1]);
+  matches.sort((a, b) => a[0] - b[0]);
+  return { matches, unmatchedRows: Array.from({ length: rows }, (_, i) => i).filter(i => !matches.some(m => m[0] === i)), unmatchedColumns: Array.from({ length: columns }, (_, j) => j).filter(j => !matches.some(m => m[1] === j)) };
 }

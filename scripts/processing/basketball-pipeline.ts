@@ -1,367 +1,81 @@
-import {
-  getFrameDimensions,
-  type ByteTrackedDetection,
-  type Detection,
-  type FrameSource,
-  type StableDetection,
-} from "../core/detections";
-import {
-  createGameMode,
-  type GameMode,
-  type GameModeId,
-  type GameSnapshot,
-} from "../game/game-mode";
-import {
-  BasketballYolo,
-  type BasketballYoloOptions,
-  type ExecutionProvider,
-} from "../inference/basketball-yolo";
-import {
-  ByteTracker,
-  type ByteTrackerOptions,
-} from "../tracking/byte-tracker";
-import {
-  CropRecovery,
-  type CropRecoveryOptions,
-} from "../tracking/crop-recovery";
-import {
-  StableIdentityTracker,
-  type StableIdentityTrackerOptions,
-} from "../tracking/stable-identity-tracker";
-import { ParticipantIdentityTracker } from "../tracking/participant-identity";
+import { getFrameDimensions, type Detection, type FrameSource, type StableDetection } from "../core/detections";
+import { BasketballYolo, type BasketballYoloOptions } from "../inference/basketball-yolo";
+import { OSNetEncoder } from "../inference/osnet";
+import { DeepEIoU } from "../tracking/deep-eiou";
+import { ParticipantAssigner } from "../tracking/participants";
+import { CameraMotion } from "../events/camera-motion";
+import { ObjectObservations } from "../events/observations";
+import { BasketballFSM } from "../events/basketball-fsm";
+import { projectSnapshot, type GameModeId, type GameSnapshot } from "../game/game-mode";
+import type { BasketballEvent, CameraTransform, EventSnapshot, Statistics } from "../events/types";
 
-export interface BasketballPipelineOptions {
-  gameMode?: GameModeId;
-  effectiveFps?: number;
-  detector?: BasketballYolo;
-  detectorOptions?: BasketballYoloOptions;
-  byteTrackerOptions?: ByteTrackerOptions;
-  stableTrackerOptions?: StableIdentityTrackerOptions;
-  recoveryOptions?: CropRecoveryOptions;
-  analysisMode?: AnalysisMode;
-}
-
-export interface PipelineTimings {
-  detectorMilliseconds: number;
-  recoveryMilliseconds: number;
-  trackingMilliseconds: number;
-  gameMilliseconds: number;
-  totalMilliseconds: number;
-  recoveryCropCount: number;
-}
-
-export interface FrameCorrection {
-  frameIndex: number;
-  detections: StableDetection[];
-  game: GameSnapshot;
-}
-
-interface HistoricalFrame {
-  frameIndex: number;
-  detections: StableDetection[];
-  game: GameSnapshot | null;
-}
-
+export interface PipelineTimings { detectorMilliseconds: number; recoveryMilliseconds: number; trackingMilliseconds: number; gameMilliseconds: number; totalMilliseconds: number; recoveryCropCount: number }
+export interface FrameCorrection { frameIndex: number; detections: StableDetection[]; game: GameSnapshot }
 export interface PipelineFrameResult {
-  frameIndex: number;
-  timestampSeconds: number;
-  rawDetections: Detection[];
-  byteDetections: ByteTrackedDetection[];
-  detections: StableDetection[];
-  game: GameSnapshot;
-  corrections: FrameCorrection[];
-  executionProvider: ExecutionProvider;
-  outputShape: number[];
-  timings: PipelineTimings;
+  frameIndex: number; timestampSeconds: number; rawDetections: Detection[]; detections: StableDetection[];
+  game: GameSnapshot; corrections: FrameCorrection[]; executionProvider: string; outputShape: number[]; timings: PipelineTimings; motion: CameraTransform;
 }
-
-export type AnalysisMode = "fast" | "balanced" | "quality";
-
+export interface AnalysisFrame { frameIndex: number; timestampSeconds: number; detections: StableDetection[]; snapshot: EventSnapshot; motion: CameraTransform }
+export interface CompletedAnalysis { identityCorrections: Array<{ from: number; into: number; reason: string }>; frames: AnalysisFrame[]; events: BasketballEvent[]; statistics: Statistics; identities: Array<[number, number]>; version: string }
+interface HistoryFrame { frameIndex: number; time: number; raw: Detection[]; players: StableDetection[]; motion: CameraTransform; width: number; height: number }
+export interface BasketballPipelineOptions { detector?: BasketballYoloOptions; osnetUrl?: string; effectiveFps?: number; gameMode?: GameModeId; analysisMode?: "fast" | "balanced" | "quality" }
 export class BasketballPipeline {
-  private readonly detector: BasketballYolo;
-  private readonly byteTracker: ByteTracker;
-  private readonly stableTracker: StableIdentityTracker;
-  private readonly participants = new ParticipantIdentityTracker();
-  private readonly recovery: CropRecovery;
-  private gameMode: GameMode;
-  private effectiveFps: number;
-  private readonly history: HistoricalFrame[] = [];
-
-  constructor({
-    gameMode = "1v1",
-    effectiveFps = 30,
-    detector,
-    detectorOptions,
-    byteTrackerOptions,
-    stableTrackerOptions,
-    recoveryOptions,
-    analysisMode = "balanced",
-  }: BasketballPipelineOptions = {}) {
-    this.effectiveFps = Math.max(effectiveFps, 0.01);
-
-    this.detector = detector ?? new BasketballYolo({
-      confidence: 0.10,
-      ...detectorOptions,
-    });
-
-    this.byteTracker = new ByteTracker({
-      effectiveFps: this.effectiveFps,
-      ...byteTrackerOptions,
-    });
-
-    this.stableTracker = new StableIdentityTracker({
-      effectiveFps: this.effectiveFps,
-      confirmHits: 5,
-      minimumConfirmations: 3,
-      maxMissingFrames: 75,
-      ...stableTrackerOptions,
-    });
-
-
-    const recoveryProfiles: Record<AnalysisMode, CropRecoveryOptions> = {
-      fast: {
-        enabled: false,
-        ballSearchEnabled: true,
-      },
-      balanced: {
-        enabled: true,
-        discoveryEnabled: false,
-        recoveryIntervalFrames: 2,
-        maxCropsPerFrame: 1,
-        ballSearchEnabled: true,
-      },
-      quality: {
-        enabled: true,
-        discoveryEnabled: true,
-        recoveryIntervalFrames: 1,
-        maxCropsPerFrame: 3,
-        ballSearchEnabled: true,
-      },
-    };
-
-    this.recovery = new CropRecovery(this.detector, {
-      effectiveFps: this.effectiveFps,
-      ...recoveryProfiles[analysisMode],
-      ...recoveryOptions,
-    });
-
-
-    this.gameMode = createGameMode(
-      gameMode,
-      this.effectiveFps,
-    );
-    this.participants.configureTiming(this.effectiveFps);
+  private detector: BasketballYolo;
+  private encoder: OSNetEncoder;
+  private tracker = new DeepEIoU();
+  private participants = new ParticipantAssigner();
+  private motion = new CameraMotion();
+  private observations = new ObjectObservations();
+  private fsm = new BasketballFSM();
+  private history: HistoryFrame[] = [];
+  private fps: number;
+  private lastTime: number | null = null;
+  private busy = false;
+  constructor(options: BasketballPipelineOptions = {}) { this.detector = new BasketballYolo(options.detector); this.encoder = new OSNetEncoder(options.osnetUrl); this.fps = options.effectiveFps ?? 30; }
+  async load(): Promise<void> { await this.motion.load(); await this.detector.load(); await this.encoder.load(); }
+  configureTiming(fps: number): void { if (!Number.isFinite(fps) || fps <= 0) throw new Error("Invalid analysis frame rate"); this.fps = fps; }
+  setGameMode(mode: GameModeId): void { if (mode !== "1v1") throw new Error("Only 1v1 is available"); }
+  reset(): void { this.tracker.reset(); this.participants.reset(); this.motion.reset(); this.observations.reset(); this.fsm = new BasketballFSM(); this.history = []; this.lastTime = null; }
+  playerLabel(trackId: number | null): string | null { return trackId !== null && trackId > 0 ? `Participant ${trackId}` : null; }
+  async processFrame(source: FrameSource, frameIndex: number, timestampSeconds: number): Promise<PipelineFrameResult> {
+    if (this.busy) throw new Error("Frames must be analysed sequentially");
+    if (!Number.isFinite(timestampSeconds) || (this.lastTime !== null && timestampSeconds <= this.lastTime)) throw new Error("Video timestamps must increase");
+    this.busy = true;
+    try {
+      const start = performance.now(), { width, height } = getFrameDimensions(source);
+      const raw = await this.detector.detect(source), detectedAt = performance.now();
+      const people = raw.filter(d => d.classId === 1).sort((a, b) => b.confidence - a.confidence);
+      const features = await this.encoder.encode(source, people.map(d => d.box));
+      const dt = this.lastTime === null ? 30 / this.fps : (timestampSeconds - this.lastTime) * 30;
+      const players = this.participants.update(this.tracker.update(people, features, dt), timestampSeconds, width, height);
+      const motion = this.motion.update(source, raw), trackedAt = performance.now();
+      const lock = this.fsm.active?.status === "confirmed" ? this.fsm.active.basketId : null;
+      const { ball, basket } = this.observations.update(raw, timestampSeconds, width, height, motion, lock);
+      this.fsm.resolveIdentities(this.participants.confirmedSegments);
+      const snapshot = this.fsm.update(players, timestampSeconds, ball, basket, motion);
+      const ids = [...this.participants.participants.keys()];
+      const game = projectSnapshot(snapshot, [ids[0] ?? null, ids[1] ?? null]);
+      const end = performance.now(); this.lastTime = timestampSeconds;
+      this.history.push({ frameIndex, time: timestampSeconds, raw, players, motion, width, height });
+      return { frameIndex, timestampSeconds, rawDetections: raw, detections: [...players, ...(ball ? [ball] : []), ...(basket ? [basket] : [])], game, corrections: [], executionProvider: `YOLO ${this.detector.executionProvider} · OSNet ${this.encoder.executionProvider}`, outputShape: this.detector.outputShape, motion,
+        timings: { detectorMilliseconds: detectedAt - start, trackingMilliseconds: trackedAt - detectedAt, gameMilliseconds: end - trackedAt, totalMilliseconds: end - start, recoveryMilliseconds: 0, recoveryCropCount: 0 } };
+    } finally { this.busy = false; }
   }
-
-  async load(): Promise<void> {
-    await this.detector.load();
-  }
-
-  configureTiming(effectiveFps: number): void {
-    this.effectiveFps = Math.max(effectiveFps, 0.01);
-    this.byteTracker.configureTiming(this.effectiveFps);
-    this.stableTracker.configureTiming(this.effectiveFps);
-    this.recovery.configureTiming(this.effectiveFps);
-    this.gameMode.configureTiming(this.effectiveFps);
-    this.participants.configureTiming(this.effectiveFps);
-  }
-
-  setGameMode(gameModeId: GameModeId): void {
-    if (this.gameMode.id === gameModeId) {
-      return;
+  async finish(cancelled: () => boolean = () => false): Promise<CompletedAnalysis> {
+    const fsm = new BasketballFSM(), observations = new ObjectObservations(), frames: AnalysisFrame[] = [];
+    fsm.resolveIdentities(this.participants.confirmedSegments, true);
+    for (let i = 0; i < this.history.length; i++) {
+      if (cancelled()) throw new DOMException("Analysis cancelled", "AbortError");
+      const frame = this.history[i], players = this.participants.backfill(frame.players);
+      const lock = fsm.active?.status === "confirmed" ? fsm.active.basketId : null;
+      const { ball, basket } = observations.update(frame.raw, frame.time, frame.width, frame.height, frame.motion, lock);
+      const snapshot = fsm.update(players, frame.time, ball, basket, frame.motion);
+      frames.push({ frameIndex: frame.frameIndex, timestampSeconds: frame.time, detections: [...players, ...(ball ? [ball] : []), ...(basket ? [basket] : [])], snapshot, motion: frame.motion });
+      if (i % 100 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
     }
-
-    this.gameMode = createGameMode(
-      gameModeId,
-      this.effectiveFps,
-    );
-    this.reset();
+    fsm.finish(); fsm.resolveIdentities(this.participants.confirmedSegments, true);
+    if (frames.length) frames[frames.length - 1].snapshot = fsm.snapshot(frames[frames.length - 1].timestampSeconds);
+    return { identityCorrections: [], frames, events: structuredClone(fsm.events), statistics: fsm.snapshot(Infinity).statistics, identities: [...this.participants.confirmedSegments], version: "deep-eiou-participants-v2-events-v3-ts1" };
   }
-
-  reset(): void {
-    this.byteTracker.reset();
-    this.stableTracker.reset();
-    this.recovery.reset();
-    this.gameMode.reset();
-    this.participants.reset();
-    this.history.length = 0;
-  }
-
-  async processFrame(
-    source: FrameSource,
-    frameIndex: number,
-    timestampSeconds: number,
-  ): Promise<PipelineFrameResult> {
-    const totalStartedAt = performance.now();
-    const { width, height } = getFrameDimensions(source);
-
-    // 1. Full-frame ONNX detection.
-    const detectorResult = await this.detector.detect(source, 0.10);
-
-    const trackingStartedAt = performance.now();
-
-    // 2. Only genuine full-frame detections enter ByteTrack.
-    const byteDetections = this.byteTracker.update(
-      detectorResult.detections,
-      width,
-      height,
-    );
-
-    // 3. Convert ByteTrack IDs to stable public IDs.
-    this.stableTracker.beginFrame(
-      byteDetections,
-      source,
-      width,
-      height,
-    );
-
-    const recoveryTargets = this.stableTracker.getRecoveryTargets().sort(
-      (a, b) => Number(b.group === "ball") - Number(a.group === "ball"),
-    );
-    const preparedFullDetections =
-      this.stableTracker.getPreparedFullFrameDetections();
-
-    // 4. Isolated crop inference. These detections never enter ByteTrack.
-    const recoveryResult = await this.recovery.process(
-      source,
-      preparedFullDetections,
-      recoveryTargets,
-      this.stableTracker.isSceneAcquired(),
-      (byteTrackId) => (
-        this.stableTracker.stableIdForByteTrack(byteTrackId)
-      ),
-    );
-
-    // 5. Targeted recoveries update their existing stable identity directly.
-    for (const recovery of recoveryResult.recoveries) {
-      this.stableTracker.applyRecovery(
-        recovery.stableId,
-        recovery.detection,
-      );
-    }
-
-    // 6. Crop detections may refine current tracks or become tentative
-    // discoveries exactly as in the Python stable-ID layer.
-    this.stableTracker.mergeCropDetections(
-      recoveryResult.mappedDetections,
-      width,
-      height,
-    );
-
-    const stableDetections = this.stableTracker.finishFrame(source);
-    const detections = this.gameMode.id === "1v1"
-      ? this.participants.update(source, stableDetections)
-      : stableDetections;
-    const trackingMilliseconds = performance.now() - trackingStartedAt;
-
-    const gameStartedAt = performance.now();
-    const gameDetections = this.gameMode.id === "1v1"
-      ? detections.filter((d) =>
-          (d.classId !== 2 && d.classId !== 4)
-          || d.trackId === -2 || d.trackId === -1,
-        )
-      : detections;
-
-    this.history.push({ frameIndex, detections: cloneDetections(detections), game: null });
-    const reconnections = this.participants.takeReconnections();
-    let firstChanged = this.history.length;
-
-    for (const reconnect of reconnections) {
-      let fromFrame = reconnect.fromFrame;
-      let gaps = 0;
-      for (let i = this.history.length - 1; i >= 0; i -= 1) {
-        const frame = this.history[i];
-        if (frame.frameIndex >= fromFrame) continue;
-        if (reconnect.toFrame - frame.frameIndex > this.effectiveFps * 3) break;
-        const unconfirmed = frame.detections.some((d) =>
-          (d.classId === 2 || d.classId === 4) && d.trackId === reconnect.sourceId,
-        );
-        if (unconfirmed) {
-          fromFrame = frame.frameIndex;
-          gaps = 0;
-        } else if (++gaps > 1) {
-          break;
-        }
-      }
-
-      for (let i = 0; i < this.history.length; i += 1) {
-        const frame = this.history[i];
-        if (frame.frameIndex < fromFrame || frame.frameIndex > reconnect.toFrame) continue;
-        if (frame.detections.some((d) => d.trackId === reconnect.participantId)) continue;
-
-        const candidate = frame.detections.find((d) =>
-          (d.classId === 2 || d.classId === 4) && d.trackId === reconnect.sourceId,
-        );
-        if (!candidate) continue;
-        candidate.trackId = reconnect.participantId;
-        candidate.className = candidate.classId === 4 ? "Player Shooting" : "Player";
-        firstChanged = Math.min(firstChanged, i);
-      }
-    }
-
-    let game: GameSnapshot;
-    const corrections: FrameCorrection[] = [];
-
-    if (firstChanged < this.history.length - 1) {
-      this.gameMode = createGameMode(this.gameMode.id, this.effectiveFps);
-      for (let i = 0; i < this.history.length; i += 1) {
-        const frame = this.history[i];
-        const input = frame.detections.filter((d) =>
-          (d.classId !== 2 && d.classId !== 4)
-          || d.trackId === -2 || d.trackId === -1,
-        );
-        frame.game = this.gameMode.update(input);
-        if (i >= firstChanged && i < this.history.length - 1) {
-          corrections.push({
-            frameIndex: frame.frameIndex,
-            detections: cloneDetections(frame.detections),
-            game: frame.game,
-          });
-        }
-      }
-      game = this.history[this.history.length - 1].game!;
-    } else {
-      game = this.gameMode.update(gameDetections);
-      this.history[this.history.length - 1].game = game;
-    }
-    const gameMilliseconds = performance.now() - gameStartedAt;
-
-    return {
-      frameIndex,
-      timestampSeconds,
-      rawDetections: detectorResult.detections.map(copyDetection),
-      byteDetections: byteDetections.map((detection) => ({
-        ...detection,
-        box: [...detection.box],
-      })),
-      detections,
-      game,
-      corrections,
-      executionProvider: detectorResult.executionProvider,
-      outputShape: detectorResult.outputShape,
-      timings: {
-        detectorMilliseconds: detectorResult.inferenceMilliseconds,
-        recoveryMilliseconds: recoveryResult.recoveryMilliseconds,
-        trackingMilliseconds,
-        gameMilliseconds,
-        totalMilliseconds: performance.now() - totalStartedAt,
-        recoveryCropCount: recoveryResult.cropCount,
-      },
-    };
-  }
-
-  playerLabel(trackId: number | null): string | null {
-    return this.gameMode.playerLabel(trackId);
-  }
-}
-
-function copyDetection(detection: Detection): Detection {
-  return {
-    ...detection,
-    box: [...detection.box],
-  };
-}
-
-function cloneDetections(detections: readonly StableDetection[]): StableDetection[] {
-  return detections.map((d) => ({ ...d, box: [...d.box] }));
+  async dispose(): Promise<void> { this.motion.reset(); this.history = []; await this.encoder.dispose(); await this.detector.dispose(); }
 }

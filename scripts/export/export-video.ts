@@ -48,8 +48,6 @@ const PORTRAIT_SIZE = {
   height: 1280,
 };
 
-const BALL_CLASS_ID = 0;
-const BALL_IN_BASKET_CLASS_ID = 1;
 
 const WATERMARK_ICON_URL = new URL(
   "../../assets/icons/basketball.svg",
@@ -796,17 +794,7 @@ function drawWatermark(
 function ballCentre(
   frame: PlaybackFrame,
 ): Point | null {
-  const detection =
-    frame.detections.find(
-      (candidate) =>
-        candidate.classId
-        === BALL_CLASS_ID,
-    )
-    ?? frame.detections.find(
-      (candidate) =>
-        candidate.classId
-        === BALL_IN_BASKET_CLASS_ID,
-    );
+  const detection = frame.detections.find(candidate => candidate.classId === 0 && candidate.state !== "reference");
 
   if (!detection) {
     return null;
@@ -889,9 +877,7 @@ function detectionLabel(
   switch (detection.classId) {
     case 0:
       return "Ball";
-    case 1:
-      return "Ball in basket";
-    case 3:
+    case 2:
       return "Basket";
     default:
       return detection.className;
@@ -914,12 +900,9 @@ function detectionColour(
     case 0:
       return "#ff5a16";
     case 1:
-    case 3:
-      return "#25ad55";
-    case 2:
       return "#ff9a45";
-    case 4:
-      return "#9156d8";
+    case 2:
+      return "#25ad55";
     default:
       return "#ffffff";
   }

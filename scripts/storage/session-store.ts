@@ -1,3 +1,5 @@
+import type { BasketballEvent, CameraTransform, Statistics } from "../events/types";
+import type { MatchPair } from "../game/game-mode";
 import type {
   BoundingBox,
   ClassId,
@@ -17,9 +19,18 @@ export type SessionEventType =
   | "made"
   | "missed"
   | "rebound"
-  | "possession";
+  | "possession"
+  | "attempt"
+  | "unresolved";
 
 export interface PlaybackDetection {
+  participantId?: number | null;
+  identitySegment?: number | null;
+  rawTrackId?: number | null;
+  identityState?: string;
+  state?: StableDetection["state"];
+  source?: string;
+  legacyClassId?: number;
   classId: ClassId;
   className: string;
   confidence: number;
@@ -28,6 +39,7 @@ export interface PlaybackDetection {
 }
 
 export interface PlaybackFrame {
+  motion?: CameraTransform;
   frameIndex: number;
   timestampSeconds: number;
   detections: PlaybackDetection[];
@@ -52,6 +64,14 @@ export interface SessionSummary {
 }
 
 export interface StoredSession {
+  schemaVersion?: 2;
+  identityCorrections?: Array<{ from: number; into: number; reason: string }>;
+  pipelineVersion?: string;
+  eventLedger?: BasketballEvent[];
+  allStatistics?: Statistics;
+  matchPair?: MatchPair;
+  participantThumbnails?: Record<string, string>;
+  identitySegments?: Array<[number, number]>;
   id: string;
   createdAt: string;
   modeId: GameModeId;
@@ -89,6 +109,7 @@ export function compactDetection(
   detection: StableDetection,
 ): PlaybackDetection {
   return {
+    participantId: detection.participantId, identitySegment: detection.identitySegment, rawTrackId: detection.rawTrackId, identityState: detection.identityState, state: detection.state, source: detection.source,
     classId: detection.classId,
     className: detection.className,
     confidence: roundNumber(detection.confidence, 4),
@@ -155,8 +176,7 @@ export async function getSession(
 
         request.addEventListener("success", () => {
           resolve(
-            (request.result as StoredSession | undefined)
-            ?? null,
+            request.result ? normaliseStoredSession(request.result as StoredSession) : null,
           );
         });
 
@@ -331,4 +351,13 @@ export async function listSessionSummaries(): Promise<SessionListItem[]> {
   } finally {
     database.close();
   }
+}
+export function normaliseStoredSession(session: StoredSession): StoredSession {
+  if (session.schemaVersion === 2) return session;
+  const map = [0, 0, 1, 2, 1] as const;
+  return { ...session, schemaVersion: 2, pipelineVersion: "legacy-five-class", frames: session.frames.map(frame => ({ ...frame, detections: frame.detections.map(d => {
+    const legacyClassId = d.classId as number;
+    if (legacyClassId < 0 || legacyClassId > 4) throw new Error("Unknown legacy detection class");
+    return { ...d, classId: map[legacyClassId], legacyClassId, source: "legacy" };
+  }) })) };
 }

@@ -223,6 +223,8 @@ function renderSessionShell(currentSession: StoredSession): void {
 
   videoStage.style.aspectRatio =
     `${currentSession.width} / ${currentSession.height}`;
+  videoStage.style.maxWidth = currentSession.height > currentSession.width ? `${70 * currentSession.width / currentSession.height}svh` : "100%";
+  videoStage.style.marginInline = "auto";
 
   overlayCanvas.width = currentSession.width;
   overlayCanvas.height = currentSession.height;
@@ -350,8 +352,7 @@ function updateCurrentStats(frame: PlaybackFrame): void {
 
   const ballDetected = frame.detections.some(
     (detection) =>
-      detection.classId === 0
-      || detection.classId === 1,
+      detection.classId === 0,
   );
 
   ballStateValue.textContent = ballDetected
@@ -509,6 +510,12 @@ function shotStateLabel(state: string): string {
     case "SHOT ATTEMPT":
       return "In flight";
 
+    case "SHOT MISSED":
+      return "Missed";
+    case "UNRESOLVED SHOT":
+      return "Unresolved";
+    case "RELEASE CANDIDATE":
+      return "Checking release";
     case "SHOT MADE":
       return "Made";
 
@@ -541,6 +548,10 @@ function findFrameAtOrBefore(
 
 function eventMarker(type: SessionEvent["type"]): string {
   switch (type) {
+    case "attempt":
+      return "•";
+    case "unresolved":
+      return "?";
     case "made":
       return "✓";
 
