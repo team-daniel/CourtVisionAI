@@ -194,9 +194,10 @@ async function startAnalysis(file: File): Promise<void> {
       formatDuration(videoInfo.durationSeconds),
     ].join(" · ");
 
-    analysisStatus.textContent = "Loading models and camera tracking…";
     analysisDetail.textContent = "The first run can take a little longer";
-    await pipeline.load();
+    await pipeline.load(message => {
+      analysisStatus.textContent = message;
+    });
 
     if (analysisCancelled) {
       resetUploadPage();
@@ -519,3 +520,44 @@ function requestPersistentStorage(): void {
     console.warn("Persistent storage request failed.", error);
   });
 }
+
+function showPhoneNotice(): void {
+  const isPhone = /iPhone|iPod|Android.*Mobile/i.test(navigator.userAgent);
+  if (!isPhone) return;
+
+  const dialog = document.createElement("dialog");
+  dialog.setAttribute("aria-labelledby", "phone-notice-title");
+  dialog.setAttribute("aria-describedby", "phone-notice-description");
+  dialog.style.cssText = `
+    width: min(360px, calc(100vw - 32px));
+    box-sizing: border-box;
+    padding: 24px;
+    border: 1px solid #e5e7eb;
+    border-radius: 20px;
+    background: #fff;
+    color: #171717;
+    font-family: inherit;
+    box-shadow: 0 20px 60px #0003;
+  `;
+
+  dialog.innerHTML = `
+    <h2 id="phone-notice-title" style="margin:0 0 12px;font-size:20px">
+      Analysing on your phone?
+    </h2>
+    <p id="phone-notice-description" style="margin:0 0 20px;line-height:1.6;color:#525252">
+      Video analysis can take a while on a phone. For faster processing,
+      we recommend using a laptop or desktop. You can still continue here.
+    </p>
+    <form method="dialog" style="margin:0">
+      <button autofocus style="width:100%;padding:12px 18px;border:0;border-radius:999px;background:#ff4f0a;color:#fff;font:inherit;font-weight:600;cursor:pointer">
+        Got it
+      </button>
+    </form>
+  `;
+
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+showPhoneNotice();

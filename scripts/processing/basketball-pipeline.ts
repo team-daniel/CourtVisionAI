@@ -32,7 +32,14 @@ export class BasketballPipeline {
   private lastTime: number | null = null;
   private busy = false;
   constructor(options: BasketballPipelineOptions = {}) { this.detector = new BasketballYolo(options.detector); this.encoder = new OSNetEncoder(options.osnetUrl); this.fps = options.effectiveFps ?? 30; }
-  async load(): Promise<void> { await this.motion.load(); await this.detector.load(); await this.encoder.load(); }
+  async load(onStatus: (message: string) => void = () => {}): Promise<void> {
+    onStatus("Loading camera tracking…");
+    await this.motion.load();
+    onStatus("Loading basketball model…");
+    await this.detector.load();
+    onStatus("Loading player appearance model…");
+    await this.encoder.load();
+  }
   configureTiming(fps: number): void { if (!Number.isFinite(fps) || fps <= 0) throw new Error("Invalid analysis frame rate"); this.fps = fps; }
   setGameMode(mode: GameModeId): void { if (mode !== "1v1") throw new Error("Only 1v1 is available"); }
   reset(): void { this.tracker.reset(); this.participants.reset(); this.motion.reset(); this.observations.reset(); this.fsm = new BasketballFSM(); this.history = []; this.lastTime = null; }

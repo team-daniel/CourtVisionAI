@@ -11,12 +11,6 @@ export class BasketballYolo {
   get executionProvider(): string { return this.model.executionProvider; }
   async load(): Promise<void> {
     await this.model.load();
-    for (const size of [1280, 1600]) {
-      try {
-        const result = await this.model.run(new Float32Array(3 * size * size).fill(114 / 255), [1, 3, size, size]);
-        decodeYolo(result.data, result.dims, { width: size, height: size, scale: 1, left: 0, top: 0 }, [0, 1, 2], .15);
-      } catch (error) { throw new Error(`YOLO could not run at ${size}×${size}. Use the dynamic float32 ONNX export. ${error instanceof Error ? error.message : error}`); }
-    }
   }
   private async pass(source: FrameSource, size: number, classes: ClassId[], confidence: number): Promise<Detection[]> {
     const { width, height } = getFrameDimensions(source), scale = Math.min(size / width, size / height);
